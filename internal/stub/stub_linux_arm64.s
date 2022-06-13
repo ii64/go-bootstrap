@@ -6,7 +6,7 @@
 
 TEXT ·DisallowInternalReplacer(SB), NOSPLIT, $0
     NO_LOCAL_POINTERS
-    MOVQ R10, AX
+    MOVD R7, R0
     RET
 
 

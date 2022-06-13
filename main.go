@@ -62,7 +62,7 @@ func main() {
 		panic(err)
 	}
 
-	// patching
+	// get fn replacer
 	var selfSymtab *gosym.Table
 	selfSymtab, err = getSelfSymtab()
 	if err != nil {
@@ -93,23 +93,26 @@ func main() {
 	logger.Println("target base:", baseAddr)
 	logger.Println("target path:", c.Path)
 
-	var fprog *os.File
+	var fprogmem *os.File
 	var n int
-	fprog, err = getProcessMem(pid)
+	fprogmem, err = getProcessMem(pid)
+	if err != nil {
+		panic(err)
+	}
+	defer fprogmem.Close()
+
+	var tab *gosym.Table
+
+	// lookup statically
+	logger.Println("reading target symtab...")
+	var fprog *os.File
+	fprog, err = os.Open(c.Path)
 	if err != nil {
 		panic(err)
 	}
 	defer fprog.Close()
 
-	var tab *gosym.Table
-	var dmpTab = make([]byte, 0x10000000)
-	n, err = pRead(fprog, dmpTab, baseAddr)
-	if err != nil {
-		panic(err)
-	}
-	dmpTab = dmpTab[:n]
-
-	tab, err = getSymtab(bytes.NewReader(dmpTab))
+	tab, err = getSymtab(fprog)
 	if err != nil {
 		panic(err)
 	}
@@ -131,7 +134,7 @@ func main() {
 	logger.Println("target info", targetFn, targetFnSz)
 
 	targetFnDmp := make([]byte, targetFnSz)
-	n, err = pRead(fprog, targetFnDmp, targetFn)
+	n, err = pRead(fprogmem, targetFnDmp, targetFn)
 	if err != nil {
 		panic(err)
 	}
@@ -142,7 +145,7 @@ func main() {
 	}
 
 	if true {
-		n, err = pWrite(fprog, srcProg, targetFn) // write the replacer
+		n, err = pWrite(fprogmem, srcProg, targetFn) // write the replacer
 		if err != nil {
 			panic(err)
 		}
@@ -185,6 +188,7 @@ func getProcBaseAddress(pid int) (uintptr, error) {
 	if pid > 0 {
 		path = fmt.Sprintf("/proc/%d/maps", pid)
 	}
+	logger.Println("proc base addr:", path)
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, err
@@ -196,6 +200,7 @@ func getProcBaseAddress(pid int) (uintptr, error) {
 	if err != nil {
 		return 0, err
 	}
+	logger.Println("proc base addr:", string(addrStr))
 	addrStr = addrStr[:len(addrStr)-1]
 
 	var addr uint64
@@ -222,6 +227,7 @@ func getSymtab(r io.ReaderAt) (tab *gosym.Table, err error) {
 	var f *elf.File
 	f, err = elf.NewFile(r)
 	if err != nil {
+		err = fmt.Errorf("symtab readelf: %w", err)
 		return
 	}
 	defer f.Close()
@@ -232,11 +238,13 @@ func getSymtab(r io.ReaderAt) (tab *gosym.Table, err error) {
 	var pclntabData []byte
 	pclntabData, err = section.Data()
 	if err != nil {
+		err = fmt.Errorf("symtab pclndata section: %w", err)
 		return
 	}
 	ltab := gosym.NewLineTable(pclntabData, txtBeginAddr)
 	tab, err = gosym.NewTable([]byte{}, ltab)
 	if err != nil {
+		err = fmt.Errorf("symtab read tab: %w", err)
 		return
 	}
 	return
